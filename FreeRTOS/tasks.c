@@ -29,6 +29,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define SCHEDULER_DEFAULT 0
+#define SCHEDULER_RMS     1
+#define SCHEDULER_EDF     2
+#define SCHEDULER_LOTTERY 3
+
+volatile uint8_t ucCurrentScheduler = SCHEDULER_DEFAULT;
+
+/* 宣告你要自己實作的 EDF 與 Lottery 函式 */
+extern void vBHInsert( tskTCB *pxNewTask );
+extern tskTCB* pxBHExtractMin( void );
+extern tskTCB* pxSelectTaskByLottery( void );
+
 /* Defining MPU_WRAPPERS_INCLUDED_FROM_API_FILE prevents task.h from redefining
 all the API functions to use the MPU wrappers.  That should only be done when
 task.h is included from an application file. */
@@ -215,11 +227,16 @@ count overflows. */
  * Place the task represented by pxTCB into the appropriate ready list for
  * the task.  It is inserted at the end of the list.
  */
-#define prvAddTaskToReadyList( pxTCB )																\
-	traceMOVED_TASK_TO_READY_STATE( pxTCB );														\
-	taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );												\
-	vListInsertEnd( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ), &( ( pxTCB )->xStateListItem ) ); \
-	tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB )
+#define prvAddTaskToReadyList( pxTCB )                                              \
+    traceMOVED_TASK_TO_READY_STATE( pxTCB );                                        \
+    /* 1. 無論什麼模式，都乖乖讓 FreeRTOS 放入原生 Ready List 維持系統穩定 */      \
+    taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );                             \
+    vListInsertEnd( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ), &( ( pxTCB )->xStateListItem ) ); \
+    /* 2. 如果是 EDF 模式，"額外"將它加入 Treap */                                   \
+    if( ucCurrentScheduler == SCHEDULER_EDF ) {                                     \
+        vTreapInsert( ( pxTCB ) );                                                  \
+    }                                                                               \
+    tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB )
 /*-----------------------------------------------------------*/
 
 /*
@@ -322,6 +339,16 @@ typedef struct tskTaskControlBlock 			/* The old naming convention is used to pr
 	#if( configUSE_POSIX_ERRNO == 1 )
 		int iTaskErrno;
 	#endif
+
+	// Extended fields for custom scheduler
+    TickType_t xPeriod;
+    TickType_t xAbsoluteDeadline;
+    uint32_t ulTickets;
+
+    truct tskTaskControlBlock *pxTreapLeft;   /* 左子節點 (Deadline 較早) */
+    struct tskTaskControlBlock *pxTreapRight;  /* 右子節點 (Deadline 較晚) */
+    struct tskTaskControlBlock *pxTreapParent; /* 父節點 (刪除與旋轉時極度需要) */
+    uint32_t ulTreapPriority;                  /* 隨機產生的 Heap Priority (維持平衡) */
 
 } tskTCB;
 
@@ -2994,9 +3021,37 @@ void vTaskSwitchContext( void )
 		}
 		#endif
 
+		/* =========================================================== */
+        /* 動態排程器核心切換邏輯                                      */
+        /* =========================================================== */
+        if( ucCurrentScheduler == SCHEDULER_EDF )
+        {
+            /* 1. 將被搶佔但仍處於 Ready 狀態的當前任務塞回 Heap 中 */
+            /* 實作 vBHInsert 時，建議在裡面檢查該任務是否已被阻塞，避免重複插入 */
+            if( pxCurrentTCB->eStateListItem.pvContainer == NULL )
+            {
+                // 注意：這裡只是一個簡化概念，FreeRTOS 內部狀態判定需依賴 xStateListItem
+                // 你在實作 EDF 時必須確保 Blocked 的任務不會被放回 Heap。
+                vBHInsert( pxCurrentTCB );
+            }
+
+            /* 2. 從 Binomial Heap 取出 Deadline 最小的任務交給 CPU */
+            pxCurrentTCB = pxBHExtractMin();
+        }
+        else if( ucCurrentScheduler == SCHEDULER_LOTTERY )
+        {
+            /* 透過彩票機制隨機抽選任務 */
+            pxCurrentTCB = pxSelectTaskByLottery();
+        }
+        else
+        {
+            /* Default 與 RMS 共用原生邏輯 */
+            /* RMS 的優先級改變會在按鈕切換模式時靜態完成 */
+            taskSELECT_HIGHEST_PRIORITY_TASK();
+        }
+
 		/* Select a new task to run using either the generic C or port
 		optimised asm code. */
-		taskSELECT_HIGHEST_PRIORITY_TASK(); /*lint !e9079 void * is used as this macro is used with timers and co-routines too.  Alignment is known to be fine as the type of the pointer stored and retrieved is the same. */
 		traceTASK_SWITCHED_IN();
 
 		/* After the new task is switched in, update the global errno. */
@@ -5210,5 +5265,4 @@ when performing module tests). */
 	#endif
 
 #endif
-
-
+#include "scheduler.c"

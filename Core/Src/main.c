@@ -19,7 +19,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_host.h"
-
+#include "FreeRTOS.h"
+#include "task.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -65,7 +66,87 @@ void MX_USB_HOST_Process(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void DWT_Init(void) {
+    /* 1. 啟用 TRCENA (Trace Enable) */
+    *(volatile uint32_t *)0xE000EDFC |= (1 << 24);
 
+    /* 2. 將計數器歸零 */
+    *(volatile uint32_t *)0xE0001004 = 0;
+
+    /* 3. 啟用 Cycle Counter */
+    *(volatile uint32_t *)0xE0001000 |= 1;
+}
+extern void vSetTaskCustomParams(TaskHandle_t xTask, TickType_t xPeriod, uint32_t ulTickets);
+extern void vTaskUpdateDeadline(TaskHandle_t xTask, TickType_t xNextDeadline);
+extern volatile uint8_t ucCurrentScheduler;
+
+/* 任務參數結構 */
+typedef struct {
+    TickType_t xPeriod;
+    uint32_t ulTickets;
+    uint32_t ulWorkload_us; /* 模擬執行的時間 (微秒) */
+} TaskParams_t;
+
+TaskParams_t xTaskAParams = { .xPeriod = 10,  .ulTickets = 10,  .ulWorkload_us = 2000 }; // 2ms 工作
+TaskParams_t xTaskBParams = { .xPeriod = 50,  .ulTickets = 50,  .ulWorkload_us = 5000 }; // 5ms 工作
+TaskParams_t xTaskCParams = { .xPeriod = 100, .ulTickets = 100, .ulWorkload_us = 10000 };// 10ms 工作
+
+/* 通用的測試任務架構 */
+void vGenericTestTask(void *pvParameters)
+{
+    TaskParams_t *pxParams = (TaskParams_t *)pvParameters;
+    TaskHandle_t xHandle = xTaskGetCurrentTaskHandle();
+
+    /* 1. 初始化擴展參數 */
+    vSetTaskCustomParams(xHandle, pxParams->xPeriod, pxParams->ulTickets);
+
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+
+    for( ;; )
+    {
+        /* 2. 模擬 CPU 繁重運算 (利用 DWT 計時，不產生 Block，純吃 CPU) */
+        uint32_t ulStartCycle = DWT->CYCCNT;
+        /* 將微秒轉換為 CPU Cycles (假設 SystemCoreClock 為 168MHz，依您的硬體修改) */
+        uint32_t ulTargetCycles = pxParams->ulWorkload_us * (SystemCoreClock / 1000000);
+
+        while( (DWT->CYCCNT - ulStartCycle) < ulTargetCycles )
+        {
+            __NOP(); // Busy wait
+        }
+
+        /* 可選：在此處加入 printf 或 GPIO Toggle 來觀察任務執行頻率 */
+        // printf("Task %d executed\n", pxParams->xPeriod);
+
+        /* 3. 計算並更新下一次的絕對 Deadline */
+        TickType_t xNextDeadline = xLastWakeTime + pxParams->xPeriod;
+        vTaskUpdateDeadline(xHandle, xNextDeadline);
+
+        /* 4. 精準延遲並進入 Blocked 狀態 */
+        vTaskDelayUntil(&xLastWakeTime, pxParams->xPeriod);
+    }
+}
+/* 在 main.c 上方宣告 */
+extern void vRecalculateRMSPriorities( void );
+
+/* 按鈕中斷服務常式 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if( GPIO_Pin == USER_BUTTON_PIN )
+    {
+        /* 切換排程器模式 (0:Default, 1:RMS, 2:EDF, 3:Lottery) */
+        ucCurrentScheduler = (ucCurrentScheduler + 1) % 4;
+
+        /* 若切換到 RMS，動態遍歷並重新分配優先級 */
+        if( ucCurrentScheduler == 1 )
+        {
+            vRecalculateRMSPriorities();
+        }
+
+        /* 強制觸發 Context Switch，讓新排程立刻生效 */
+        BaseType_t xHigherPriorityTaskWoken = pdTRUE;
+        portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -102,7 +183,16 @@ int main(void)
   MX_SPI1_Init();
   MX_USB_HOST_Init();
   /* USER CODE BEGIN 2 */
+  DWT_Init();
 
+    /* 3. 建立測試任務 */
+    xTaskCreate(vGenericTestTask, "TaskA", 256, (void *)&xTaskAParams, 2, NULL);
+    xTaskCreate(vGenericTestTask, "TaskB", 256, (void *)&xTaskBParams, 2, NULL);
+    xTaskCreate(vGenericTestTask, "TaskC", 256, (void *)&xTaskCParams, 2, NULL);
+    xTaskCreate(Taskmonitor, "Taskmonitor", 256, NULL, 4, NULL);
+
+    /* 4. 啟動作業系統 */
+    vTaskStartScheduler();
   /* USER CODE END 2 */
 
   /* Infinite loop */

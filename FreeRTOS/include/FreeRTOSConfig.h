@@ -48,6 +48,7 @@
 #endif
 
 #define configUSE_PREEMPTION			1
+#define configUSE_PORT_OPTIMISED_TASK_SELECTION 0
 #define configUSE_IDLE_HOOK				0
 #define configUSE_TICK_HOOK				0
 #define configCPU_CLOCK_HZ				( SystemCoreClock )
@@ -66,7 +67,7 @@
 #define configUSE_MALLOC_FAILED_HOOK	0
 #define configUSE_APPLICATION_TASK_TAG	0
 #define configUSE_COUNTING_SEMAPHORES	1
-#define configGENERATE_RUN_TIME_STATS	0
+#define configGENERATE_RUN_TIME_STATS	1
 
 /* Co-routine definitions. */
 #define configUSE_CO_ROUTINES 		0
@@ -112,16 +113,27 @@ to all Cortex-M ports, and do not rely on any particular library functions. */
 /* !!!! configMAX_SYSCALL_INTERRUPT_PRIORITY must not be set to zero !!!!
 See http://www.FreeRTOS.org/RTOS-Cortex-M3-M4.html. */
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY 	( configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << (8 - configPRIO_BITS) )
-	
+
 /* Normal assert() semantics without relying on the provision of an assert.h
 header file. */
-#define configASSERT( x ) if( ( x ) == 0 ) { taskDISABLE_INTERRUPTS(); for( ;; ); }	
-	
+#define configASSERT( x ) if( ( x ) == 0 ) { taskDISABLE_INTERRUPTS(); for( ;; ); }
+
 /* Definitions that map the FreeRTOS port interrupt handlers to their CMSIS
 standard names. */
 #define vPortSVCHandler SVC_Handler
 #define xPortPendSVHandler PendSV_Handler
 #define xPortSysTickHandler SysTick_Handler
 
-#endif /* FREERTOS_CONFIG_H */
+#if ( configGENERATE_RUN_TIME_STATS == 1 )
+    /* Declare DWT_Init function prototype */
+    extern void DWT_Init(void);
 
+    /* Bind the timer configuration macro to DWT_Init */
+    #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() DWT_Init()
+
+    /* Bind the read time macro to DWT_CYCCNT register address (0xE0001004)
+       This avoids potential conflicts with CMSIS header file inclusion in FreeRTOSConfig.h */
+    #define portGET_RUN_TIME_COUNTER_VALUE()         ( *( ( volatile uint32_t * ) 0xE0001004 ) )
+#endif
+
+#endif /* FREERTOS_CONFIG_H */

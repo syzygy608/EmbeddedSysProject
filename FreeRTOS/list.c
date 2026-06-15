@@ -169,17 +169,13 @@ const TickType_t xValueOfInsertion = pxNewListItem->xItemValue;
 
 UBaseType_t uxListRemove( ListItem_t * const pxItemToRemove )
 {
-/* The list item knows which list it is in.  Obtain the list from the list
-item. */
-List_t * const pxList = pxItemToRemove->pxContainer;
+	List_t * const pxList = pxItemToRemove->pxContainer;
 
 	pxItemToRemove->pxNext->pxPrevious = pxItemToRemove->pxPrevious;
 	pxItemToRemove->pxPrevious->pxNext = pxItemToRemove->pxNext;
 
-	/* Only used during decision coverage testing. */
 	mtCOVERAGE_TEST_DELAY();
 
-	/* Make sure the index is left pointing to a valid item. */
 	if( pxList->pxIndex == pxItemToRemove )
 	{
 		pxList->pxIndex = pxItemToRemove->pxPrevious;
@@ -192,7 +188,17 @@ List_t * const pxList = pxItemToRemove->pxContainer;
 	pxItemToRemove->pxContainer = NULL;
 	( pxList->uxNumberOfItems )--;
 
+    /* =========================================================== */
+    /* 自定義排程器攔截：任務離開任何 List 時，同步嘗試從 Treap 拔除 */
+    /* =========================================================== */
+    extern void vTreapSafeRemove( void *pvOwner );
+    if( pxItemToRemove->pvOwner != NULL )
+    {
+        /* 將擁有這個 ListItem 的實體 (通常是 TCB) 傳給我們的安全移除函式 */
+        vTreapSafeRemove( pxItemToRemove->pvOwner );
+    }
+    /* =========================================================== */
+
 	return pxList->uxNumberOfItems;
 }
 /*-----------------------------------------------------------*/
-
