@@ -19,11 +19,11 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_host.h"
-#include "FreeRTOS.h"
-#include "task.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "FreeRTOS.h"
+#include "task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,8 +48,10 @@ I2S_HandleTypeDef hi2s3;
 
 SPI_HandleTypeDef hspi1;
 
-/* USER CODE BEGIN PV */
+UART_HandleTypeDef huart2;
 
+/* USER CODE BEGIN PV */
+TaskHandle_t xControlTaskHandle = NULL;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -58,6 +60,7 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_USART2_UART_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
@@ -66,6 +69,7 @@ void MX_USB_HOST_Process(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void vControlTask(void *pvParameters);
 void DWT_Init(void) {
     /* 1. 啟用 TRCENA (Trace Enable) */
     *(volatile uint32_t *)0xE000EDFC |= (1 << 24);
@@ -79,7 +83,7 @@ void DWT_Init(void) {
 extern void vSetTaskCustomParams(TaskHandle_t xTask, TickType_t xPeriod, uint32_t ulTickets);
 extern void vTaskUpdateDeadline(TaskHandle_t xTask, TickType_t xNextDeadline);
 extern volatile uint8_t ucCurrentScheduler;
-
+extern void Taskmonitor(void);
 /* 任務參數結構 */
 typedef struct {
     TickType_t xPeriod;
@@ -114,8 +118,6 @@ void vGenericTestTask(void *pvParameters)
             __NOP(); // Busy wait
         }
 
-        /* 可選：在此處加入 printf 或 GPIO Toggle 來觀察任務執行頻率 */
-        // printf("Task %d executed\n", pxParams->xPeriod);
 
         /* 3. 計算並更新下一次的絕對 Deadline */
         TickType_t xNextDeadline = xLastWakeTime + pxParams->xPeriod;
@@ -131,20 +133,38 @@ extern void vRecalculateRMSPriorities( void );
 /* 按鈕中斷服務常式 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    if( GPIO_Pin == USER_BUTTON_PIN )
+    /* 這裡改成 GPIO_PIN_0，也就是 PA0 */
+    if( GPIO_Pin == GPIO_PIN_0 )
     {
-        /* 切換排程器模式 (0:Default, 1:RMS, 2:EDF, 3:Lottery) */
-        ucCurrentScheduler = (ucCurrentScheduler + 1) % 4;
+        static uint32_t ulLastPressTime = 0;
+        uint32_t ulCurrentTime = HAL_GetTick();
 
-        /* 若切換到 RMS，動態遍歷並重新分配優先級 */
-        if( ucCurrentScheduler == 1 )
+        if( (ulCurrentTime - ulLastPressTime) > 200 )
         {
-            vRecalculateRMSPriorities();
-        }
+            ulLastPressTime = ulCurrentTime;
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-        /* 強制觸發 Context Switch，讓新排程立刻生效 */
-        BaseType_t xHigherPriorityTaskWoken = pdTRUE;
-        portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+            if( xControlTaskHandle != NULL )
+            {
+                vTaskNotifyGiveFromISR( xControlTaskHandle, &xHigherPriorityTaskWoken );
+            }
+            portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+        }
+    }
+}
+void vSystemPrint(const char *pcString)
+{
+    HAL_UART_Transmit(&huart2, (uint8_t *)pcString, strlen(pcString), HAL_MAX_DELAY);
+}
+void vMonitorTask(void *pvParameters)
+{
+    for( ;; )
+    {
+        /* 呼叫我們實作好的監聽函式 */
+        Taskmonitor();
+
+        /* 休息 2 秒鐘 (2000 個 SysTick) */
+        vTaskDelay(2000);
     }
 }
 /* USER CODE END 0 */
@@ -182,14 +202,17 @@ int main(void)
   MX_I2S3_Init();
   MX_SPI1_Init();
   MX_USB_HOST_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  vSystemPrint("\r\n--- System Booting ---\r\n");
   DWT_Init();
 
     /* 3. 建立測試任務 */
     xTaskCreate(vGenericTestTask, "TaskA", 256, (void *)&xTaskAParams, 2, NULL);
     xTaskCreate(vGenericTestTask, "TaskB", 256, (void *)&xTaskBParams, 2, NULL);
     xTaskCreate(vGenericTestTask, "TaskC", 256, (void *)&xTaskCParams, 2, NULL);
-    xTaskCreate(Taskmonitor, "Taskmonitor", 256, NULL, 4, NULL);
+    xTaskCreate(vMonitorTask, "Monitor", 256, NULL, 4, NULL);
+    xTaskCreate(vControlTask, "Control", 256, NULL, 4, &xControlTaskHandle);
 
     /* 4. 啟動作業系統 */
     vTaskStartScheduler();
@@ -359,6 +382,39 @@ static void MX_SPI1_Init(void)
 }
 
 /**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -409,11 +465,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
   HAL_GPIO_Init(PDM_OUT_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
+  /*Configure GPIO pin : PA0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : BOOT1_Pin */
   GPIO_InitStruct.Pin = BOOT1_Pin;
@@ -450,12 +506,38 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+void vControlTask(void *pvParameters)
+{
+    for(;;)
+    {
+        /* 1. 無窮期等待來自中斷的通知 (Block 狀態，完全不吃 CPU) */
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
+        /* 2. 收到通知後，切換排程器模式 */
+        ucCurrentScheduler = (ucCurrentScheduler + 1) % 4;
+
+        /* 3. 在「任務層級」呼叫修改優先級 API，這是絕對安全且合法的！ */
+        if( ucCurrentScheduler == 1 ) // SCHEDULER_RMS
+        {
+            vRecalculateRMSPriorities();
+        }
+
+        /* 可選：印出當前模式，讓您的終端機畫面更清楚 */
+        if(ucCurrentScheduler == 0) vSystemPrint("\r\n[Mode Changed: Default]\r\n");
+        else if(ucCurrentScheduler == 1) vSystemPrint("\r\n[Mode Changed: RMS]\r\n");
+        else if(ucCurrentScheduler == 2) vSystemPrint("\r\n[Mode Changed: EDF]\r\n");
+        else if(ucCurrentScheduler == 3) vSystemPrint("\r\n[Mode Changed: Lottery]\r\n");
+    }
+}
 /* USER CODE END 4 */
 
 /**

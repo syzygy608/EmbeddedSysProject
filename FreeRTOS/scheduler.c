@@ -1,3 +1,4 @@
+#include "main.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <string.h>
@@ -22,6 +23,7 @@ PRIVILEGED_DATA static tskTCB *pxEDFTreapRoot = NULL;
 PRIVILEGED_DATA static TaskHandle_t xRegisteredTasks[MAX_CUSTOM_TASKS];
 PRIVILEGED_DATA static uint8_t ucRegisteredTaskCount = 0;
 
+extern void vSystemPrint(const char *pcString);
 
 /* ========================================================================= */
 /* 給 main.c 呼叫的外部 API (Bridge Functions)                               */
@@ -333,40 +335,17 @@ void vTreapSafeRemove( void *pvOwner )
     /* 確認在 Treap 內，執行真正的 O(log n) 旋轉拔除 */
     vTreapRemove( pxTask );
 }
-/* 設定任務的擴展排程參數 */
-void vSetTaskCustomParams( TaskHandle_t xTask, TickType_t xPeriod, uint32_t ulTickets )
-{
-    tskTCB *pxTCB = ( tskTCB * ) xTask;
-    if( pxTCB != NULL )
-    {
-        pxTCB->xPeriod = xPeriod;
-        pxTCB->ulTickets = ulTickets;
-        /* 初始 Deadline 先設為 0，任務啟動後會自行更新 */
-        pxTCB->xAbsoluteDeadline = 0;
-    }
-}
-
-/* 任務每次執行完畢準備進入 Delay 前，需呼叫此函式更新下一次的 Deadline */
-void vTaskUpdateDeadline( TaskHandle_t xTask, TickType_t xNextDeadline )
-{
-    tskTCB *pxTCB = ( tskTCB * ) xTask;
-    if( pxTCB != NULL )
-    {
-        pxTCB->xAbsoluteDeadline = xNextDeadline;
-    }
-}
 
 /* 宣告外部的 UART 控制代碼 (請依據您的 STM32 實際變數名稱修改，通常是 huart2) */
-extern UART_HandleTypeDef huart2;
 
 /* ========================================================================= */
 /* 內部輔助函式：走訪指定的 List 並透過 UART 印出任務資訊                    */
 /* ========================================================================= */
-static void prvPrintList(List_t *pxList, const char *pcState)
+static void prvBufferList(List_t *pxList, const char *pcState, char *pcBuffer)
 {
     ListItem_t *pxListItem;
     tskTCB *pxTCB;
-    char cBuffer[128];
+    char cTemp[128];
 
     /* 確保 List 裡面有東西才進行走訪 */
     if( listCURRENT_LIST_LENGTH( pxList ) > 0 )
@@ -377,8 +356,8 @@ static void prvPrintList(List_t *pxList, const char *pcState)
         {
             pxTCB = ( tskTCB * ) listGET_LIST_ITEM_OWNER( pxListItem );
 
-            /* 格式化字串：包含原本的狀態，以及我們自定義的 Period, Deadline, Tickets */
-            sprintf(cBuffer, "| %-10s | %-4lu | %-9s | %-6lu | %-8lu | %-7lu |\r\n",
+            /* 將當前任務的資訊格式化到暫存字串 cTemp */
+            sprintf(cTemp, "| %-10s | %-4lu | %-9s | %-6lu | %-8lu | %-7lu |\r\n",
                     pxTCB->pcTaskName,
                     pxTCB->uxPriority,
                     pcState,
@@ -386,8 +365,8 @@ static void prvPrintList(List_t *pxList, const char *pcState)
                     pxTCB->xAbsoluteDeadline,
                     pxTCB->ulTickets);
 
-            /* 傳送資料 (使用 Polling 模式，確保在 SuspendAll 期間安全傳送) */
-            HAL_UART_Transmit(&huart2, (uint8_t *)cBuffer, strlen(cBuffer), HAL_MAX_DELAY);
+            /* 將 cTemp 接續到我們傳進來的大緩衝區 pcBuffer 後面 */
+            strcat(pcBuffer, cTemp);
 
             pxListItem = listGET_NEXT( pxListItem );
         }
@@ -399,34 +378,26 @@ static void prvPrintList(List_t *pxList, const char *pcState)
 /* ========================================================================= */
 void Taskmonitor(void)
 {
-    char cHeader[] = "\r\n=================================================================\r\n"
-                     "| Task Name  | PR   | State     | Period | Deadline | Tickets |\r\n"
-                     "=================================================================\r\n";
+	static char cBigBuffer[2048];
+	cBigBuffer[0] = '\0';
 
-    /* 暫停排程器：這非常重要！
-       走訪 List 牽涉到指標操作 (pxNext)，如果此時發生中斷並觸發 Context Switch
-       導致 List 結構改變，程式會立刻發生 Hard Fault (指標存取異常)。*/
-    vTaskSuspendAll();
+	char cHeader[] = "\r\n=================================================================\r\n"
+					 "| Task Name  | PR   | State     | Period | Deadline | Tickets |\r\n"
+					 "=================================================================\r\n";
+	strcat(cBigBuffer, cHeader);
 
-    /* 印出表頭 */
-    HAL_UART_Transmit(&huart2, (uint8_t *)cHeader, strlen(cHeader), HAL_MAX_DELAY);
+	/* 1. 進入安全區（極短時間內完成指標走訪，不進行任何 UART 傳送） */
+	vTaskSuspendAll();
+	{
+		for( UBaseType_t ux = 0; ux < configMAX_PRIORITIES; ux++ )
+		{
+			// 修改 prvPrintList，讓它只是把字串 strcat 到 cBigBuffer，而不呼叫 vSystemPrint
+			prvBufferList( &( pxReadyTasksLists[ ux ] ), "Ready", cBigBuffer );
+		}
+		prvBufferList( pxDelayedTaskList, "Blocked", cBigBuffer );
+	}
+	xTaskResumeAll(); /* 2. 立刻恢復排程 */
 
-    /* 1. 走訪 Ready List (包含所有優先級) */
-    for( UBaseType_t ux = 0; ux < configMAX_PRIORITIES; ux++ )
-    {
-        prvPrintList( &( pxReadyTasksLists[ ux ] ), "Ready" );
-    }
-
-    /* 2. 走訪 Delayed List (也就是處於 Blocked 狀態，例如使用 vTaskDelay 的任務) */
-    /* pxDelayedTaskList 是一個指標，會指向 xDelayedTaskList1 或 xDelayedTaskList2 */
-    prvPrintList( pxDelayedTaskList, "Blocked" );
-    prvPrintList( pxOverflowDelayedTaskList, "Blocked" );
-
-    /* 3. 走訪 Suspended List (如果您有開啟 vTaskSuspend 的話) */
-    #if ( INCLUDE_vTaskSuspend == 1 )
-        prvPrintList( &xSuspendedTaskList, "Suspended" );
-    #endif
-
-    /* 恢復排程器：讓系統繼續運行 */
-    xTaskResumeAll();
+	/* 3. 在排程器正常運作下，安全地印出完整資料 */
+	vSystemPrint(cBigBuffer);
 }

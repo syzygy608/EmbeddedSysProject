@@ -28,18 +28,8 @@
 /* Standard includes. */
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
-#define SCHEDULER_DEFAULT 0
-#define SCHEDULER_RMS     1
-#define SCHEDULER_EDF     2
-#define SCHEDULER_LOTTERY 3
-
-volatile uint8_t ucCurrentScheduler = SCHEDULER_DEFAULT;
-
-/* 宣告你要自己實作的 EDF 與 Lottery 函式 */
-extern void vBHInsert( tskTCB *pxNewTask );
-extern tskTCB* pxBHExtractMin( void );
-extern tskTCB* pxSelectTaskByLottery( void );
 
 /* Defining MPU_WRAPPERS_INCLUDED_FROM_API_FILE prevents task.h from redefining
 all the API functions to use the MPU wrappers.  That should only be done when
@@ -345,12 +335,24 @@ typedef struct tskTaskControlBlock 			/* The old naming convention is used to pr
     TickType_t xAbsoluteDeadline;
     uint32_t ulTickets;
 
-    truct tskTaskControlBlock *pxTreapLeft;   /* 左子節點 (Deadline 較早) */
+    struct tskTaskControlBlock *pxTreapLeft;   /* 左子節點 (Deadline 較早) */
     struct tskTaskControlBlock *pxTreapRight;  /* 右子節點 (Deadline 較晚) */
     struct tskTaskControlBlock *pxTreapParent; /* 父節點 (刪除與旋轉時極度需要) */
     uint32_t ulTreapPriority;                  /* 隨機產生的 Heap Priority (維持平衡) */
 
 } tskTCB;
+
+#define SCHEDULER_DEFAULT 0
+#define SCHEDULER_RMS     1
+#define SCHEDULER_EDF     2
+#define SCHEDULER_LOTTERY 3
+
+volatile uint8_t ucCurrentScheduler = SCHEDULER_DEFAULT;
+
+extern void vTreapInsert( tskTCB *pxNewTask );
+extern tskTCB* pxTreapExtractMin( void );
+extern tskTCB* pxSelectTaskByLottery( void );
+extern void vTreapSafeRemove( void *pvOwner );
 
 /* The old tskTCB name is maintained above then typedefed to the new TCB_t name
 below to enable the use of older kernel aware debuggers. */
@@ -3028,15 +3030,14 @@ void vTaskSwitchContext( void )
         {
             /* 1. 將被搶佔但仍處於 Ready 狀態的當前任務塞回 Heap 中 */
             /* 實作 vBHInsert 時，建議在裡面檢查該任務是否已被阻塞，避免重複插入 */
-            if( pxCurrentTCB->eStateListItem.pvContainer == NULL )
+            if( pxCurrentTCB->xStateListItem.pvContainer == NULL )
             {
                 // 注意：這裡只是一個簡化概念，FreeRTOS 內部狀態判定需依賴 xStateListItem
                 // 你在實作 EDF 時必須確保 Blocked 的任務不會被放回 Heap。
-                vBHInsert( pxCurrentTCB );
+            	vTreapInsert( pxCurrentTCB );
             }
 
-            /* 2. 從 Binomial Heap 取出 Deadline 最小的任務交給 CPU */
-            pxCurrentTCB = pxBHExtractMin();
+            pxCurrentTCB = pxTreapExtractMin();
         }
         else if( ucCurrentScheduler == SCHEDULER_LOTTERY )
         {
