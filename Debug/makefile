@@ -41,34 +41,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := EmbeddedSysProject
+BUILD_ARTIFACT_NAME := forcopy
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-EmbeddedSysProject.elf \
+forcopy.elf \
 
 MAP_FILES += \
-EmbeddedSysProject.map \
+forcopy.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-EmbeddedSysProject.list \
+forcopy.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: EmbeddedSysProject.elf secondary-outputs
+main-build: forcopy.elf secondary-outputs
 
 # Tool invocations
-EmbeddedSysProject.elf EmbeddedSysProject.map: $(OBJS) $(USER_OBJS) C:\Users\hankw\STM32CubeIDE\workspace_1.17.0\EmbeddedSysProject\STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "EmbeddedSysProject.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\hankw\STM32CubeIDE\workspace_1.17.0\EmbeddedSysProject\STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="EmbeddedSysProject.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+forcopy.elf forcopy.map: $(OBJS) $(USER_OBJS) C:\Users\CSSA\Downloads\EmbeddedSysProject-main\EmbeddedSysProject-main\STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "forcopy.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\CSSA\Downloads\EmbeddedSysProject-main\EmbeddedSysProject-main\STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="forcopy.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -77,14 +77,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-EmbeddedSysProject.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "EmbeddedSysProject.list"
+forcopy.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "forcopy.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) EmbeddedSysProject.elf EmbeddedSysProject.list EmbeddedSysProject.map default.size.stdout
+	-$(RM) default.size.stdout forcopy.elf forcopy.list forcopy.map
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)

@@ -35,15 +35,15 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_hcd.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h \
  ../USB_HOST/App/usb_host.h \
- C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/FreeRTOS.h \
- C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/FreeRTOSConfig.h \
- C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/projdefs.h \
- C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/portable.h \
- C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/deprecated_definitions.h \
- C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/portable/ARM_CM4F/portmacro.h \
- C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/mpu_wrappers.h \
- C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/task.h \
- C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/list.h
+ C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/FreeRTOS.h \
+ C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/FreeRTOSConfig.h \
+ C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/projdefs.h \
+ C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/portable.h \
+ C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/deprecated_definitions.h \
+ C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/portable/ARM_CM4F/portmacro.h \
+ C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/mpu_wrappers.h \
+ C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/task.h \
+ C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/list.h
 ../Core/Inc/main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
 ../Core/Inc/stm32f4xx_hal_conf.h:
@@ -81,12 +81,12 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_hcd.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h:
 ../USB_HOST/App/usb_host.h:
-C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/FreeRTOS.h:
-C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/FreeRTOSConfig.h:
-C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/projdefs.h:
-C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/portable.h:
-C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/deprecated_definitions.h:
-C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/portable/ARM_CM4F/portmacro.h:
-C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/mpu_wrappers.h:
-C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/task.h:
-C:/Users/hankw/STM32CubeIDE/workspace_1.17.0/EmbeddedSysProject/FreeRTOS/include/list.h:
+C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/FreeRTOS.h:
+C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/FreeRTOSConfig.h:
+C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/projdefs.h:
+C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/portable.h:
+C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/deprecated_definitions.h:
+C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/portable/ARM_CM4F/portmacro.h:
+C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/mpu_wrappers.h:
+C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/task.h:
+C:/Users/CSSA/Downloads/EmbeddedSysProject-main/EmbeddedSysProject-main/FreeRTOS/include/list.h:

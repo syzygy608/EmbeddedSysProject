@@ -129,6 +129,7 @@ void vGenericTestTask(void *pvParameters)
 }
 /* 在 main.c 上方宣告 */
 extern void vRecalculateRMSPriorities( void );
+extern void vRebuildEDFTreap( void );
 
 /* 按鈕中斷服務常式 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
@@ -136,18 +137,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     /* 這裡改成 GPIO_PIN_0，也就是 PA0 */
     if( GPIO_Pin == GPIO_PIN_0 )
     {
-        static uint32_t ulLastPressTime = 0;
-        uint32_t ulCurrentTime = HAL_GetTick();
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-        if( (ulCurrentTime - ulLastPressTime) > 200 )
+        if( ( xControlTaskHandle != NULL ) &&
+            ( xTaskGetSchedulerState() == taskSCHEDULER_RUNNING ) )
         {
-            ulLastPressTime = ulCurrentTime;
-            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-            if( xControlTaskHandle != NULL )
-            {
-                vTaskNotifyGiveFromISR( xControlTaskHandle, &xHigherPriorityTaskWoken );
-            }
+            HAL_NVIC_DisableIRQ(EXTI0_IRQn);
+            vTaskNotifyGiveFromISR( xControlTaskHandle, &xHigherPriorityTaskWoken );
             portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
         }
     }
@@ -211,8 +207,9 @@ int main(void)
     xTaskCreate(vGenericTestTask, "TaskA", 256, (void *)&xTaskAParams, 2, NULL);
     xTaskCreate(vGenericTestTask, "TaskB", 256, (void *)&xTaskBParams, 2, NULL);
     xTaskCreate(vGenericTestTask, "TaskC", 256, (void *)&xTaskCParams, 2, NULL);
-    xTaskCreate(vMonitorTask, "Monitor", 256, NULL, 4, NULL);
-    xTaskCreate(vControlTask, "Control", 256, NULL, 4, &xControlTaskHandle);
+    /* 修改 main.c 的 main() 函式中，建立 Control 任務的優先級 */
+    xTaskCreate(vMonitorTask, "Monitor", 256, NULL, 3, NULL);
+    xTaskCreate(vControlTask, "Control", 256, NULL, 4, &xControlTaskHandle); // Highest valid priority, handles scheduler switching
 
     /* 4. 啟動作業系統 */
     vTaskStartScheduler();
@@ -423,6 +420,15 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 /* USER CODE BEGIN MX_GPIO_Init_1 */
+  /* STM32F4 的 RCC 底層地址，直接強開 AHB1 匯流排上的 GPIOA (bit 0) 與 GPIOB (bit 1) */
+    *(volatile uint32_t *)(0x40023800 + 0x30) |= (1 << 0) | (1 << 1);
+
+    /* 強開 APB2 匯流排上的 SYSCFG (bit 14) */
+    *(volatile uint32_t *)(0x40023800 + 0x44) |= (1 << 14);
+
+    /* 加上短暫延遲，確保硬體電位穩定 */
+    __asm("nop");
+    __asm("nop");
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
@@ -432,7 +438,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
-
+  __HAL_RCC_SYSCFG_CLK_ENABLE();
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(CS_I2C_SPI_GPIO_Port, CS_I2C_SPI_Pin, GPIO_PIN_RESET);
 
@@ -468,7 +474,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin : PA0 */
   GPIO_InitStruct.Pin = GPIO_PIN_0;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : BOOT1_Pin */
@@ -507,7 +513,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI0_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 7, 0);
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -522,6 +528,17 @@ void vControlTask(void *pvParameters)
         /* 1. 無窮期等待來自中斷的通知 (Block 狀態，完全不吃 CPU) */
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
+        vTaskDelay(pdMS_TO_TICKS(50));
+        while( HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_SET )
+        {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+
+        (void) ulTaskNotifyTake(pdTRUE, 0);
+        __HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_0);
+        HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
         /* 2. 收到通知後，切換排程器模式 */
         ucCurrentScheduler = (ucCurrentScheduler + 1) % 4;
 
@@ -530,14 +547,23 @@ void vControlTask(void *pvParameters)
         {
             vRecalculateRMSPriorities();
         }
+        else if( ucCurrentScheduler == 2 ) // SCHEDULER_EDF
+        {
+            vRebuildEDFTreap();
+        }
 
         /* 可選：印出當前模式，讓您的終端機畫面更清楚 */
         if(ucCurrentScheduler == 0) vSystemPrint("\r\n[Mode Changed: Default]\r\n");
         else if(ucCurrentScheduler == 1) vSystemPrint("\r\n[Mode Changed: RMS]\r\n");
         else if(ucCurrentScheduler == 2) vSystemPrint("\r\n[Mode Changed: EDF]\r\n");
         else if(ucCurrentScheduler == 3) vSystemPrint("\r\n[Mode Changed: Lottery]\r\n");
+
     }
 }
+//void EXTI0_IRQHandler(void)
+//{
+//    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0); // 呼叫 HAL 核心處理器，它會清空 Pending bit 並引導至 Callback
+//}
 /* USER CODE END 4 */
 
 /**
@@ -592,3 +618,12 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+/* 在 stm32f4xx_it.c 或 main.c 底部補上 */
+extern UART_HandleTypeDef huart2; // 宣告在 main.c 上方的結構體
+
+void USART2_IRQHandler(void)
+{
+    /* 呼叫 HAL 庫的通用 UART 中斷處理器 */
+    /* 它會自動清除傳送完成、接收完成等暫存器旗標，避免重複觸發當機 */
+    HAL_UART_IRQHandler(&huart2);
+}

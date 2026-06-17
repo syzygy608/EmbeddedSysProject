@@ -353,6 +353,7 @@ extern void vTreapInsert( tskTCB *pxNewTask );
 extern tskTCB* pxTreapExtractMin( void );
 extern tskTCB* pxSelectTaskByLottery( void );
 extern void vTreapSafeRemove( void *pvOwner );
+extern void vRebuildEDFTreap( void );
 
 /* The old tskTCB name is maintained above then typedefed to the new TCB_t name
 below to enable the use of older kernel aware debuggers. */
@@ -3023,17 +3024,12 @@ void vTaskSwitchContext( void )
 		}
 		#endif
 
-		/* =========================================================== */
-        /* 動態排程器核心切換邏輯                                      */
-        /* =========================================================== */
+
         if( ucCurrentScheduler == SCHEDULER_EDF )
         {
-            /* 1. 將被搶佔但仍處於 Ready 狀態的當前任務塞回 Heap 中 */
-            /* 實作 vBHInsert 時，建議在裡面檢查該任務是否已被阻塞，避免重複插入 */
+            // if the task is not blocked, insert it back into the Treap
             if( pxCurrentTCB->xStateListItem.pvContainer == NULL )
             {
-                // 注意：這裡只是一個簡化概念，FreeRTOS 內部狀態判定需依賴 xStateListItem
-                // 你在實作 EDF 時必須確保 Blocked 的任務不會被放回 Heap。
             	vTreapInsert( pxCurrentTCB );
             }
 
@@ -3041,13 +3037,10 @@ void vTaskSwitchContext( void )
         }
         else if( ucCurrentScheduler == SCHEDULER_LOTTERY )
         {
-            /* 透過彩票機制隨機抽選任務 */
             pxCurrentTCB = pxSelectTaskByLottery();
         }
         else
         {
-            /* Default 與 RMS 共用原生邏輯 */
-            /* RMS 的優先級改變會在按鈕切換模式時靜態完成 */
             taskSELECT_HIGHEST_PRIORITY_TASK();
         }
 
@@ -5160,7 +5153,10 @@ const TickType_t xConstTickCount = xTickCount;
 	{
 		mtCOVERAGE_TEST_MARKER();
 	}
-
+	if( ucCurrentScheduler == SCHEDULER_EDF )
+	{
+		vTreapSafeRemove( pxCurrentTCB );
+	}
 	#if ( INCLUDE_vTaskSuspend == 1 )
 	{
 		if( ( xTicksToWait == portMAX_DELAY ) && ( xCanBlockIndefinitely != pdFALSE ) )

@@ -5,7 +5,6 @@
 #include <stdio.h>
 
 
-/* 確保這些狀態與 tasks.c 頂部的定義一致 */
 #define SCHEDULER_DEFAULT 0
 #define SCHEDULER_RMS     1
 #define SCHEDULER_EDF     2
@@ -13,23 +12,15 @@
 
 extern volatile uint8_t ucCurrentScheduler;
 
-/* EDF 專用全域變數：Treap 的根節點 */
+// Root node of the EDF Treap
 PRIVILEGED_DATA static tskTCB *pxEDFTreapRoot = NULL;
 
-/* ========================================================================= */
-/* 任務註冊表 (用於 RMS 遍歷與全域管理)                                      */
-/* ========================================================================= */
-#define MAX_CUSTOM_TASKS 16 /* 依您的系統需求調整 */
+#define MAX_CUSTOM_TASKS 16
 PRIVILEGED_DATA static TaskHandle_t xRegisteredTasks[MAX_CUSTOM_TASKS];
 PRIVILEGED_DATA static uint8_t ucRegisteredTaskCount = 0;
 
 extern void vSystemPrint(const char *pcString);
 
-/* ========================================================================= */
-/* 給 main.c 呼叫的外部 API (Bridge Functions)                               */
-/* ========================================================================= */
-
-/* 設定任務的擴展排程參數，並自動註冊 */
 void vSetTaskCustomParams( TaskHandle_t xTask, TickType_t xPeriod, uint32_t ulTickets )
 {
     tskTCB *pxTCB = ( tskTCB * ) xTask;
@@ -39,14 +30,12 @@ void vSetTaskCustomParams( TaskHandle_t xTask, TickType_t xPeriod, uint32_t ulTi
         pxTCB->ulTickets = ulTickets;
         pxTCB->xAbsoluteDeadline = 0;
 
-        /* 避免重複註冊 */
         uint8_t isDuplicate = 0;
         for( uint8_t i = 0; i < ucRegisteredTaskCount; i++ )
         {
             if( xRegisteredTasks[i] == xTask ) isDuplicate = 1;
         }
 
-        /* 將任務加入註冊表 */
         if( !isDuplicate && ucRegisteredTaskCount < MAX_CUSTOM_TASKS )
         {
             xRegisteredTasks[ucRegisteredTaskCount++] = xTask;
@@ -54,7 +43,6 @@ void vSetTaskCustomParams( TaskHandle_t xTask, TickType_t xPeriod, uint32_t ulTi
     }
 }
 
-/* 任務每次執行完畢準備進入 Delay 前，需呼叫此函式更新下一次的 Deadline */
 void vTaskUpdateDeadline( TaskHandle_t xTask, TickType_t xNextDeadline )
 {
     tskTCB *pxTCB = ( tskTCB * ) xTask;
@@ -64,21 +52,17 @@ void vTaskUpdateDeadline( TaskHandle_t xTask, TickType_t xNextDeadline )
     }
 }
 
-/* ========================================================================= */
-/* 核心 API：重新計算並指派 RMS 優先級                                       */
-/* ========================================================================= */
 void vRecalculateRMSPriorities( void )
 {
     if( ucRegisteredTaskCount == 0 ) return;
 
-    /* 1. 建立排序用陣列 (避免更動原本的註冊順序) */
+    // Create a sorted array to avoid modifying the registration order
     TaskHandle_t xSortedTasks[MAX_CUSTOM_TASKS];
     for( uint8_t i = 0; i < ucRegisteredTaskCount; i++ )
     {
         xSortedTasks[i] = xRegisteredTasks[i];
     }
 
-    /* 2. 氣泡排序：依照 xPeriod 由小到大排序 (週期越短，優先級應越高) */
     for( uint8_t i = 0; i < ucRegisteredTaskCount - 1; i++ )
     {
         for( uint8_t j = 0; j < ucRegisteredTaskCount - i - 1; j++ )
@@ -95,8 +79,8 @@ void vRecalculateRMSPriorities( void )
         }
     }
 
-    /* 3. 依序指派優先級 (最高為 configMAX_PRIORITIES - 1) */
-    /* RMS 規則：週期相同者，享有相同的優先級 */
+    // Assign priorities (highest is configMAX_PRIORITIES - 1)
+    // RMS rule: same period tasks share the same priority
     UBaseType_t uxCurrentPriority = configMAX_PRIORITIES - 1;
     TickType_t xLastPeriod = 0;
 
@@ -104,35 +88,48 @@ void vRecalculateRMSPriorities( void )
     {
         tskTCB *pxTCB = (tskTCB *)xSortedTasks[i];
 
-        /* 如果週期比上一個長，且優先級還沒降到底 (1)，就將優先級降一級 */
-        /* 保留優先級 0 給 FreeRTOS 原生的 Idle Task */
+        // If period is longer than the last one and priority hasn't reached the bottom (1), decrease it
+        // Reserve priority 0 for the FreeRTOS native Idle Task
         if( i > 0 && pxTCB->xPeriod > xLastPeriod && uxCurrentPriority > 1 )
         {
             uxCurrentPriority--;
         }
 
-        /* 呼叫 FreeRTOS 原生 API 安全地更改優先級與移動 Ready List */
+        // Call FreeRTOS native API safely to change priority and move to Ready List
         vTaskPrioritySet( xSortedTasks[i], uxCurrentPriority );
 
         xLastPeriod = pxTCB->xPeriod;
     }
 }
 
-/* ========================================================================= */
-/* 1. 共用核心：極速虛擬亂數產生器 (Xorshift32)                              */
-/* ========================================================================= */
+
 static uint32_t prvXorshift32( void )
 {
-    static uint32_t ulState = 123456789; /* 初始種子 */
+    static uint32_t ulState = 123456789;
     ulState ^= ulState << 13;
     ulState ^= ulState >> 17;
     ulState ^= ulState << 5;
     return ulState;
 }
 
-/* ========================================================================= */
-/* 2. Lottery Scheduling (彩票排程器)                                        */
-/* ========================================================================= */
+static tskTCB* prvSelectHighestPriorityReadyTask( void )
+{
+    List_t *pxList;
+    UBaseType_t uxPriority;
+
+    for( uxPriority = configMAX_PRIORITIES; uxPriority > 0; uxPriority-- )
+    {
+        pxList = &( pxReadyTasksLists[ uxPriority - 1 ] );
+        if( listCURRENT_LIST_LENGTH( pxList ) > 0 )
+        {
+            return ( tskTCB * ) listGET_OWNER_OF_HEAD_ENTRY( pxList );
+        }
+    }
+
+    return pxCurrentTCB;
+}
+
+// Lottery Scheduling (彩票排程器)
 tskTCB* pxSelectTaskByLottery( void )
 {
     uint32_t ulTotalTickets = 0;
@@ -143,7 +140,7 @@ tskTCB* pxSelectTaskByLottery( void )
     List_t *pxList;
     UBaseType_t uxPriority;
 
-    /* 階段一：計算目前所有處於 Ready 狀態任務的彩票總數 */
+    // Stage 1: Calculate the total number of tickets for all ready tasks
     for( uxPriority = 0; uxPriority < configMAX_PRIORITIES; uxPriority++ )
     {
         pxList = &( pxReadyTasksLists[ uxPriority ] );
@@ -159,12 +156,12 @@ tskTCB* pxSelectTaskByLottery( void )
         }
     }
 
-    if( ulTotalTickets == 0 ) return pxCurrentTCB; /* 防禦機制 */
+    if( ulTotalTickets == 0 ) return pxCurrentTCB; // Guard against zero tickets
 
-    /* 階段二：抽出中獎號碼 */
+    // Stage 2: Draw the winning ticket number
     ulWinningTicket = prvXorshift32() % ulTotalTickets;
 
-    /* 階段三：尋找中獎任務 */
+    // Stage 3: Find the winning task
     for( uxPriority = 0; uxPriority < configMAX_PRIORITIES; uxPriority++ )
     {
         pxList = &( pxReadyTasksLists[ uxPriority ] );
@@ -184,11 +181,7 @@ tskTCB* pxSelectTaskByLottery( void )
     return pxCurrentTCB;
 }
 
-/* ========================================================================= */
-/* 3. Earliest Deadline First (基於 Treap 實作)                              */
-/* ========================================================================= */
-
-/* --- Treap 輔助函式：右旋轉 (Right Rotate) --- */
+// Earliest Deadline First (EDF) based on Treap implementation
 static void prvTreapRightRotate( tskTCB **ppxRoot, tskTCB *y )
 {
     tskTCB *x = y->pxTreapLeft;
@@ -204,7 +197,6 @@ static void prvTreapRightRotate( tskTCB **ppxRoot, tskTCB *y )
     y->pxTreapParent = x;
 }
 
-/* --- Treap 輔助函式：左旋轉 (Left Rotate) --- */
 static void prvTreapLeftRotate( tskTCB **ppxRoot, tskTCB *x )
 {
     tskTCB *y = x->pxTreapRight;
@@ -220,16 +212,14 @@ static void prvTreapLeftRotate( tskTCB **ppxRoot, tskTCB *x )
     x->pxTreapParent = y;
 }
 
-/* --- EDF 核心：插入任務 --- */
+
 void vTreapInsert( tskTCB *pxNewTask )
 {
-    /* 初始化 Treap 節點屬性 */
     pxNewTask->pxTreapLeft = NULL;
     pxNewTask->pxTreapRight = NULL;
     pxNewTask->pxTreapParent = NULL;
-    pxNewTask->ulTreapPriority = prvXorshift32(); /* 賦予隨機堆疊優先級 */
+    pxNewTask->ulTreapPriority = prvXorshift32();
 
-    /* BST 標準插入邏輯 (依照 Deadline) */
     tskTCB *pxCurrent = pxEDFTreapRoot;
     tskTCB *pxParent = NULL;
 
@@ -251,7 +241,7 @@ void vTreapInsert( tskTCB *pxNewTask )
         pxParent->pxTreapRight = pxNewTask;
     }
 
-    /* 維護 Max-Heap 屬性：向上旋轉直到父節點的 Priority 較大 */
+    // Maintain Max-Heap property: rotate up until parent's priority is larger
     while( pxNewTask->pxTreapParent != NULL &&
            pxNewTask->ulTreapPriority > pxNewTask->pxTreapParent->ulTreapPriority )
     {
@@ -262,12 +252,31 @@ void vTreapInsert( tskTCB *pxNewTask )
     }
 }
 
-/* --- EDF 核心：刪除任意節點 (解決 Blocked 問題) --- */
+// Rebuild EDF Treap to resolve Blocked tasks
+void vRebuildEDFTreap( void )
+{
+    pxEDFTreapRoot = NULL;
+
+    for( uint8_t i = 0; i < ucRegisteredTaskCount; i++ )
+    {
+        tskTCB *pxTCB = ( tskTCB * ) xRegisteredTasks[i];
+
+        pxTCB->pxTreapLeft = NULL;
+        pxTCB->pxTreapRight = NULL;
+        pxTCB->pxTreapParent = NULL;
+
+        if( listIS_CONTAINED_WITHIN( &( pxReadyTasksLists[ pxTCB->uxPriority ] ),
+                                     &( pxTCB->xStateListItem ) ) != pdFALSE )
+        {
+            vTreapInsert( pxTCB );
+        }
+    }
+}
+
 void vTreapRemove( tskTCB *pxTaskToRemove )
 {
     if( pxTaskToRemove == NULL ) return;
 
-    /* 不斷向下旋轉，直到該節點變成葉節點 (Leaf) */
     while( pxTaskToRemove->pxTreapLeft != NULL || pxTaskToRemove->pxTreapRight != NULL )
     {
         if( pxTaskToRemove->pxTreapLeft == NULL ) {
@@ -281,7 +290,6 @@ void vTreapRemove( tskTCB *pxTaskToRemove )
         }
     }
 
-    /* 變成葉節點後，安全剪斷與父節點的連結 */
     if( pxTaskToRemove->pxTreapParent == NULL ) {
         pxEDFTreapRoot = NULL; /* 樹被清空了 */
     } else if( pxTaskToRemove->pxTreapParent->pxTreapLeft == pxTaskToRemove ) {
@@ -290,31 +298,24 @@ void vTreapRemove( tskTCB *pxTaskToRemove )
         pxTaskToRemove->pxTreapParent->pxTreapRight = NULL;
     }
 
-    /* 清理乾淨指標防呆 */
     pxTaskToRemove->pxTreapParent = NULL;
 }
-
-/* --- EDF 核心：取出最早 Deadline 任務 (Extract-Min) --- */
 tskTCB* pxTreapExtractMin( void )
 {
-    if( pxEDFTreapRoot == NULL ) return pxCurrentTCB;
+    if( pxEDFTreapRoot == NULL ) return prvSelectHighestPriorityReadyTask();
 
-    /* Deadline 最小的任務永遠在 BST 的最左下角 */
     tskTCB *pxMin = pxEDFTreapRoot;
     while( pxMin->pxTreapLeft != NULL )
     {
         pxMin = pxMin->pxTreapLeft;
     }
 
-    /* 取出後將其從 Treap 中刪除 */
     vTreapRemove( pxMin );
 
     return pxMin;
 }
-/* --- EDF 核心：安全防呆移除 (供 list.c 呼叫) --- */
 void vTreapSafeRemove( void *pvOwner )
 {
-    /* 如果當前不是 EDF 模式，或者傳入空指標，直接退出 */
     if( ucCurrentScheduler != SCHEDULER_EDF || pvOwner == NULL )
     {
         return;
@@ -322,8 +323,6 @@ void vTreapSafeRemove( void *pvOwner )
 
     tskTCB *pxTask = ( tskTCB * ) pvOwner;
 
-    /* 防呆檢查：如果這個 TCB 不是 Root，且沒有任何父/子節點，
-       代表它根本不在 Treap 裡面 (可能原本就在 Blocked 狀態)，直接跳過 */
     if( pxTask != pxEDFTreapRoot &&
         pxTask->pxTreapParent == NULL &&
         pxTask->pxTreapLeft == NULL &&
@@ -332,22 +331,16 @@ void vTreapSafeRemove( void *pvOwner )
         return;
     }
 
-    /* 確認在 Treap 內，執行真正的 O(log n) 旋轉拔除 */
     vTreapRemove( pxTask );
 }
 
-/* 宣告外部的 UART 控制代碼 (請依據您的 STM32 實際變數名稱修改，通常是 huart2) */
 
-/* ========================================================================= */
-/* 內部輔助函式：走訪指定的 List 並透過 UART 印出任務資訊                    */
-/* ========================================================================= */
 static void prvBufferList(List_t *pxList, const char *pcState, char *pcBuffer)
 {
     ListItem_t *pxListItem;
     tskTCB *pxTCB;
     char cTemp[128];
 
-    /* 確保 List 裡面有東西才進行走訪 */
     if( listCURRENT_LIST_LENGTH( pxList ) > 0 )
     {
         pxListItem = listGET_HEAD_ENTRY( pxList );
@@ -356,7 +349,6 @@ static void prvBufferList(List_t *pxList, const char *pcState, char *pcBuffer)
         {
             pxTCB = ( tskTCB * ) listGET_LIST_ITEM_OWNER( pxListItem );
 
-            /* 將當前任務的資訊格式化到暫存字串 cTemp */
             sprintf(cTemp, "| %-10s | %-4lu | %-9s | %-6lu | %-8lu | %-7lu |\r\n",
                     pxTCB->pcTaskName,
                     pxTCB->uxPriority,
@@ -365,7 +357,6 @@ static void prvBufferList(List_t *pxList, const char *pcState, char *pcBuffer)
                     pxTCB->xAbsoluteDeadline,
                     pxTCB->ulTickets);
 
-            /* 將 cTemp 接續到我們傳進來的大緩衝區 pcBuffer 後面 */
             strcat(pcBuffer, cTemp);
 
             pxListItem = listGET_NEXT( pxListItem );
@@ -373,9 +364,7 @@ static void prvBufferList(List_t *pxList, const char *pcState, char *pcBuffer)
     }
 }
 
-/* ========================================================================= */
-/* Taskmonitor 實作：供外部 main.c 呼叫以印出系統狀態                        */
-/* ========================================================================= */
+
 void Taskmonitor(void)
 {
 	static char cBigBuffer[2048];
@@ -386,18 +375,15 @@ void Taskmonitor(void)
 					 "=================================================================\r\n";
 	strcat(cBigBuffer, cHeader);
 
-	/* 1. 進入安全區（極短時間內完成指標走訪，不進行任何 UART 傳送） */
 	vTaskSuspendAll();
 	{
 		for( UBaseType_t ux = 0; ux < configMAX_PRIORITIES; ux++ )
 		{
-			// 修改 prvPrintList，讓它只是把字串 strcat 到 cBigBuffer，而不呼叫 vSystemPrint
 			prvBufferList( &( pxReadyTasksLists[ ux ] ), "Ready", cBigBuffer );
 		}
 		prvBufferList( pxDelayedTaskList, "Blocked", cBigBuffer );
 	}
-	xTaskResumeAll(); /* 2. 立刻恢復排程 */
+	xTaskResumeAll();
 
-	/* 3. 在排程器正常運作下，安全地印出完整資料 */
 	vSystemPrint(cBigBuffer);
 }
